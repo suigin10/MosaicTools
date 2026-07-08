@@ -1,11 +1,11 @@
 @echo off
 setlocal
-REM Mosaic Tools launcher (fallback for environments without pythonw.exe)
+REM Mosaic Tools launcher
 
-REM 実行フォルダへ移動
+REM Move to this script directory
 pushd "%~dp0"
 
-REM python.exe で起動（ドラッグ＆ドロップ対応）
+REM Launch with Python. Drag-and-drop image paths are passed through.
 python "%~dp0mosaic.py" %*
 
 popd

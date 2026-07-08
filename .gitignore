@@ -5,18 +5,14 @@ __pycache__/
 *.pyd
 .venv/
 venv/
-env/
 
 # PyInstaller
 build/
 dist/
 *.spec.bak
 
-# OS / editors
+# OS / Editor
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
-
-# Local outputs
-*_mosaic.*

@@ -103,6 +103,7 @@ def process_save(
     block: int,
     quality: int,
     webp_lossless: bool,
+    keep_metadata: bool = True,
     suffix: str = "_mosaic",
 ) -> Path:
     with Image.open(in_path) as im0:
@@ -121,17 +122,18 @@ def process_save(
         # メタデータ雛形
         save_kwargs = {}
 
-        # EXIF（補正後から取り直す）— JPEG/PNG/WebP いずれも対応
-        try:
-            exif_bytes = im.getexif().tobytes()
-            if exif_bytes:
-                save_kwargs["exif"] = exif_bytes
-        except Exception:
-            pass
+        if keep_metadata:
+            # EXIF（補正後から取り直す）— JPEG/PNG/WebP いずれも対応
+            try:
+                exif_bytes = im.getexif().tobytes()
+                if exif_bytes:
+                    save_kwargs["exif"] = exif_bytes
+            except Exception:
+                pass
 
-        # ICCプロファイル（共通）
-        if "icc_profile" in im0.info:
-            save_kwargs["icc_profile"] = im0.info["icc_profile"]
+            # ICCプロファイル（共通）
+            if "icc_profile" in im0.info:
+                save_kwargs["icc_profile"] = im0.info["icc_profile"]
 
         ext = in_path.suffix.lower()
 
@@ -152,26 +154,28 @@ def process_save(
 
         # ---------- PNG ----------
         elif ext == ".png":
-            # tEXt/iTXt を丸ごと復元
-            pnginfo = build_pnginfo_with_text(im0)
-            if pnginfo:
-                save_kwargs["pnginfo"] = pnginfo
-            # PNGのeXIfチャンク（あれば）も書ける
-            if "exif" in save_kwargs and not save_kwargs["exif"]:
-                save_kwargs.pop("exif", None)
+            if keep_metadata:
+                # tEXt/iTXt を丸ごと復元
+                pnginfo = build_pnginfo_with_text(im0)
+                if pnginfo:
+                    save_kwargs["pnginfo"] = pnginfo
+                # PNGのeXIfチャンク（あれば）も書ける
+                if "exif" in save_kwargs and not save_kwargs["exif"]:
+                    save_kwargs.pop("exif", None)
             save_kwargs["optimize"] = True
             im.save(out_path, format="PNG", **save_kwargs)
 
         # ---------- WebP ----------
         elif ext == ".webp":
-            # WebPのXMP/EXIF/ICCを維持（ソースにあれば）
-            # Pillowは 'exif' 'icc_profile' 'xmp' を受け付ける
-            if "exif" in im0.info and im0.info["exif"]:
-                save_kwargs["exif"] = im0.info["exif"]
-            if "xmp" in im0.info and im0.info["xmp"]:
-                save_kwargs["xmp"] = im0.info["xmp"]
-            if "icc_profile" in im0.info and im0.info["icc_profile"]:
-                save_kwargs["icc_profile"] = im0.info["icc_profile"]
+            if keep_metadata:
+                # WebPのXMP/EXIF/ICCを維持（ソースにあれば）
+                # Pillowは 'exif' 'icc_profile' 'xmp' を受け付ける
+                if "exif" in im0.info and im0.info["exif"]:
+                    save_kwargs["exif"] = im0.info["exif"]
+                if "xmp" in im0.info and im0.info["xmp"]:
+                    save_kwargs["xmp"] = im0.info["xmp"]
+                if "icc_profile" in im0.info and im0.info["icc_profile"]:
+                    save_kwargs["icc_profile"] = im0.info["icc_profile"]
 
             if webp_lossless:
                 save_kwargs["lossless"] = True
@@ -192,7 +196,8 @@ class MosaicGUI(TkinterDnD.Tk):
     def __init__(self, start_file: Optional[str] = None):
         super().__init__()
         self.title("Mosaic Tools")
-        self.geometry("1120x780")
+        self.geometry("1240x740")
+        self.minsize(980, 600)
 
         # 画像と状態
         self.file: Optional[Path] = None
@@ -201,8 +206,8 @@ class MosaicGUI(TkinterDnD.Tk):
         self.regions: List[Tuple[int, int, int, int]] = []
 
         # 表示サイズとスケール
-        self.canvas_w = 900
-        self.canvas_h = 720
+        self.canvas_w = 840
+        self.canvas_h = 680
         self.scale = 1.0
         self.off_x = 0
         self.off_y = 0
@@ -212,6 +217,7 @@ class MosaicGUI(TkinterDnD.Tk):
         self.drag_curr_canvas: Optional[Tuple[int, int]] = None
 
         self._build_ui()
+        self.update_option_states()
 
         # ドラッグ&ドロップ登録
         self.drop_target_register(DND_FILES)
@@ -224,8 +230,23 @@ class MosaicGUI(TkinterDnD.Tk):
                 self.load_image(p)
 
     def _build_ui(self):
-        container = ttk.Frame(self)
-        container.pack(fill="both", expand=True, padx=8, pady=8)
+        outer = ttk.Frame(self)
+        outer.pack(fill="both", expand=True, padx=8, pady=8)
+
+        # 上: 現在のファイル名
+        top = ttk.Frame(outer)
+        top.pack(fill="x", pady=(0, 6))
+        ttk.Label(top, text="現在のファイル:").pack(side="left")
+        self.var_current_file = tk.StringVar(value="（未選択）")
+        self.label_current_file = ttk.Label(
+            top,
+            textvariable=self.var_current_file,
+            anchor="w",
+        )
+        self.label_current_file.pack(side="left", fill="x", expand=True, padx=(6, 0))
+
+        container = ttk.Frame(outer)
+        container.pack(fill="both", expand=True)
 
         # 左: Canvas
         left = ttk.Frame(container)
@@ -243,10 +264,11 @@ class MosaicGUI(TkinterDnD.Tk):
         self.canvas.bind("<Button-1>", self.on_mouse_down)
         self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_mouse_up)
+        self.canvas.bind("<Configure>", self.on_canvas_configure)
 
         # 右: コントロール
-        right = ttk.Frame(container, width=300)
-        right.pack(side="right", fill="y")
+        right = ttk.Frame(container, width=360)
+        right.pack(side="right", fill="y", padx=(8, 0))
         right.pack_propagate(False)
 
         # ファイル
@@ -273,8 +295,9 @@ class MosaicGUI(TkinterDnD.Tk):
         self.scale_block.pack(fill="x")
         ttk.Label(right, textvariable=self.var_block).pack(anchor="e")
 
-        # 品質（保存時のみ影響／UIに合わせて再描画）
-        ttk.Label(right, text="品質 (JPEG/WebP)").pack(anchor="w", pady=(8, 0))
+        # 品質（保存時のみ影響）
+        self.label_quality = ttk.Label(right, text="品質（JPEG / WebP の非可逆保存）")
+        self.label_quality.pack(anchor="w", pady=(8, 0))
         self.var_quality = tk.IntVar(value=100)
         self.scale_q = ttk.Scale(
             right,
@@ -285,15 +308,27 @@ class MosaicGUI(TkinterDnD.Tk):
         )
         self.scale_q.set(100)
         self.scale_q.pack(fill="x")
-        ttk.Label(right, textvariable=self.var_quality).pack(anchor="e")
+        self.label_quality_value = ttk.Label(right, textvariable=self.var_quality)
+        self.label_quality_value.pack(anchor="e")
 
-        # Lossless
+        # WebP lossless
         self.var_lossless = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
+        self.chk_lossless = ttk.Checkbutton(
             right,
-            text="WebPを可逆 (lossless) で保存",
+            text="WebPを可逆保存する（劣化なし・容量大きめ）",
             variable=self.var_lossless,
-        ).pack(anchor="w", pady=(8, 8))
+            command=self.update_option_states,
+        )
+        self.chk_lossless.pack(anchor="w", pady=(8, 4))
+
+        # Metadata
+        self.var_keep_metadata = tk.BooleanVar(value=True)
+        self.chk_keep_metadata = ttk.Checkbutton(
+            right,
+            text="メタデータを保持する（EXIF / 生成AIプロンプト等）",
+            variable=self.var_keep_metadata,
+        )
+        self.chk_keep_metadata.pack(anchor="w", pady=(0, 8))
 
         # サフィックス
         ttk.Label(right, text="出力サフィックス").pack(anchor="w")
@@ -328,11 +363,6 @@ class MosaicGUI(TkinterDnD.Tk):
         ttk.Button(right, text="この設定で保存", command=self.save_image).pack(
             fill="x", pady=(10, 0)
         )
-        ttk.Label(
-            right,
-            text="保存先は同フォルダに *_mosaic を付与\n透過/EXIF/ICC/メタデータを可能な範囲で保持",
-        ).pack(anchor="w", pady=(6, 0))
-
         # macOS ダークテーマ対策（任意）
         try:
             self.style = ttk.Style(self)
@@ -352,11 +382,14 @@ class MosaicGUI(TkinterDnD.Tk):
             self.im = ensure_mode(ImageOps.exif_transpose(im0))
             self.file = p
             self.var_path.set(str(p))
+            self.var_current_file.set(p.name)
+            self.title(f"Mosaic Tools - {p.name}")
             self.regions.clear()
             self.listbox_delete_all()
             self.drag_start_canvas = None
             self.drag_curr_canvas = None
             self.redraw_preview()
+            self.update_option_states()
         except Exception as e:
             messagebox.showerror("エラー", f"読み込み失敗：{e}")
 
@@ -393,6 +426,46 @@ class MosaicGUI(TkinterDnD.Tk):
     def on_quality_changed(self, v: int):
         self.var_quality.set(v)
         self.redraw_preview()
+
+    def update_option_states(self):
+        """現在の入力形式とWebP可逆設定に合わせてUIを有効/無効化する。"""
+        ext = self.file.suffix.lower() if self.file else ""
+        is_jpeg = ext in (".jpg", ".jpeg")
+        is_png = ext == ".png"
+        is_webp = ext == ".webp"
+
+        # WebP可逆はWebP入力時だけ意味がある
+        if not is_webp and self.var_lossless.get():
+            self.var_lossless.set(False)
+
+        if hasattr(self, "chk_lossless"):
+            if is_webp:
+                self.chk_lossless.state(["!disabled"])
+            else:
+                self.chk_lossless.state(["disabled"])
+
+        # 品質スライダーは JPEG / WebP非可逆保存時のみ有効
+        quality_enabled = is_jpeg or (is_webp and not self.var_lossless.get())
+        q_state = "normal" if quality_enabled else "disabled"
+
+        if hasattr(self, "scale_q"):
+            if quality_enabled:
+                self.scale_q.state(["!disabled"])
+            else:
+                self.scale_q.state(["disabled"])
+        if hasattr(self, "label_quality"):
+            self.label_quality.configure(state=q_state)
+        if hasattr(self, "label_quality_value"):
+            self.label_quality_value.configure(state=q_state)
+
+    def on_canvas_configure(self, event):
+        """ウィンドウサイズ変更時にプレビュー領域の実サイズへ追従する。"""
+        if event.width <= 1 or event.height <= 1:
+            return
+        self.canvas_w = event.width
+        self.canvas_h = event.height
+        if self.im:
+            self.redraw_preview()
 
     # ---------- プレビュー描画（ライブ反映の要） ----------
     def redraw_preview(self):
@@ -569,6 +642,7 @@ class MosaicGUI(TkinterDnD.Tk):
                 block=max(1, int(self.var_block.get())),
                 quality=max(10, min(100, int(self.var_quality.get()))),
                 webp_lossless=bool(self.var_lossless.get()),
+                keep_metadata=bool(self.var_keep_metadata.get()),
                 suffix=self.var_suffix.get() or "_mosaic",
             )
             messagebox.showinfo("完了", f"保存しました：{out.name}")

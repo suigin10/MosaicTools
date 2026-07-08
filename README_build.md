@@ -1,6 +1,6 @@
 # Mosaic Tools — Windows EXE Build Guide
 
-Windows向けの単体EXEを作る手順です。
+Windows 向けの単体 EXE を作る手順です。
 
 ---
 
@@ -66,7 +66,7 @@ pip install tkinterdnd2
 
 Executables created by PyInstaller may be falsely detected by antivirus software.
 
-PyInstallerで作成したEXEは、ウイルス対策ソフトに誤検知されることがあります。
+PyInstaller で作成した EXE は、ウイルス対策ソフトに誤検知されることがあります。
 
 ### Console window appears / コンソールが出る
 
